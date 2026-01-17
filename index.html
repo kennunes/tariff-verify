@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { 
   Upload, 
   FileText, 
@@ -9,10 +9,17 @@ import {
   ArrowRight,
   Loader2,
   AlertCircle,
-  X
+  X,
+  Copy,
+  Check,
+  RefreshCcw,
+  ChevronRight
 } from 'lucide-react';
 
-const apiKey = ""; // Provided by the environment
+// API Key handling: Prioritize environment variables for Vercel/Production deployment
+const apiKey = typeof process !== 'undefined' && process.env?.VITE_GEMINI_API_KEY 
+  ? process.env.VITE_GEMINI_API_KEY 
+  : ""; 
 
 const App = () => {
   const [image, setImage] = useState(null);
@@ -20,20 +27,24 @@ const App = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
+  const [copied, setCopied] = useState(false);
   const fileInputRef = useRef(null);
 
+  // Handle file selection and conversion to Base64
   const handleFile = (file) => {
     if (file && file.type.startsWith('image/')) {
       const reader = new FileReader();
       reader.onload = (e) => {
-        setBase64Image(e.target.result.split(',')[1]);
+        // Strip metadata for API consumption
+        const base64 = e.target.result.split(',')[1];
+        setBase64Image(base64);
         setImage(e.target.result);
         setResults(null);
         setError(null);
       };
       reader.readAsDataURL(file);
     } else {
-      setError("Please upload a valid image file of your utility bill.");
+      setError("Please upload a valid image file (PNG/JPG) of your utility bill.");
     }
   };
 
@@ -43,6 +54,25 @@ const App = () => {
     handleFile(file);
   };
 
+  const copyToClipboard = () => {
+    if (!results) return;
+    const text = `Effective Tariff: ${results.currency}${(results.total_amount_due / results.total_consumption_kwh).toFixed(3)}/kWh\nTotal Bill: ${results.currency}${results.total_amount_due}`;
+    
+    // Fallback for execution environments
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    document.body.appendChild(textArea);
+    textArea.select();
+    try {
+      document.execCommand('copy');
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Copy failed');
+    }
+    document.body.removeChild(textArea);
+  };
+
   const analyzeBill = async () => {
     if (!base64Image) return;
 
@@ -50,16 +80,17 @@ const App = () => {
     setError(null);
 
     const prompt = `
-      Analyze this electricity bill and extract the following information in a structured JSON format:
-      - total_consumption_kwh: The total electricity consumed in kWh.
-      - total_amount_due: The total bill amount (including taxes).
-      - cost_breakdown: An array of objects, each containing:
-        - category: (e.g., Energy Charge, Fixed Charge, Transmission, Taxes, Surcharges)
-        - amount: The monetary value for that category.
-      - currency: The currency symbol or code.
-
-      Calculate the "effective_tariff" by dividing total_amount_due by total_consumption_kwh.
-      Return ONLY the JSON object.
+      Extract electricity billing data from this image and return ONLY a JSON object:
+      {
+        "total_consumption_kwh": number,
+        "total_amount_due": number,
+        "currency": "string",
+        "billing_period": "string",
+        "cost_breakdown": [
+          {"category": "string", "amount": number}
+        ]
+      }
+      Include categories like Energy, Transmission, Distribution, Taxes, and Surcharges.
     `;
 
     try {
@@ -87,12 +118,17 @@ const App = () => {
             })
           });
 
-          if (!response.ok) throw new Error('Network response was not ok');
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error?.message || 'API request failed');
+          }
+          
           data = await response.json();
           success = true;
         } catch (e) {
           retries++;
-          const delay = Math.pow(2, retries) * 500;
+          if (retries >= maxRetries) throw e;
+          const delay = Math.pow(2, retries) * 1000;
           await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
@@ -101,55 +137,81 @@ const App = () => {
         const textResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
         const parsed = JSON.parse(textResponse);
         
-        // Calculate percentages
-        const totalAmount = parsed.total_amount_due;
-        parsed.cost_breakdown = parsed.cost_breakdown.map(item => ({
+        // Calculate percentages for the UI
+        const totalAmount = parsed.total_amount_due || 1;
+        parsed.cost_breakdown = (parsed.cost_breakdown || []).map(item => ({
           ...item,
           percentage: ((item.amount / totalAmount) * 100).toFixed(1)
         }));
         
         setResults(parsed);
-      } else {
-        throw new Error("Failed to process the image after several attempts.");
       }
     } catch (err) {
-      setError("Unable to process bill. Please ensure the image is clear and contains tariff information.");
+      console.error(err);
+      setError(err.message.includes('API key') 
+        ? "Configuration Error: API Key missing or invalid." 
+        : "Analysis failed. Please ensure the bill is clearly visible and try again.");
     } finally {
       setIsAnalyzing(false);
     }
   };
 
+  const resetTool = () => {
+    setImage(null);
+    setBase64Image(null);
+    setResults(null);
+    setError(null);
+  };
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans p-4 md:p-8">
-      {/* Header */}
-      <header className="max-w-6xl mx-auto mb-12 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-blue-600 rounded-lg shadow-lg shadow-blue-900/20">
-            <Zap className="w-6 h-6 text-white" />
+    <div className="min-h-screen bg-[#020617] text-slate-100 font-sans p-4 md:p-10 selection:bg-blue-500/30">
+      {/* Premium Header */}
+      <header className="max-w-7xl mx-auto mb-16 flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div className="flex items-center gap-4">
+          <div className="p-3 bg-gradient-to-tr from-blue-600 to-indigo-600 rounded-xl shadow-2xl shadow-blue-500/20 ring-1 ring-white/10">
+            <Zap className="w-8 h-8 text-white fill-white/20" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight">Tariff<span className="text-blue-500">Verify</span></h1>
+          <div>
+            <h1 className="text-3xl font-black tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">
+              Tariff<span className="text-blue-500">Verify</span>
+            </h1>
+            <p className="text-slate-500 text-sm font-medium">GCC Industrial Utility Processor</p>
+          </div>
         </div>
-        <div className="hidden md:block text-slate-400 text-sm italic">
-          GCC-Ready Utility Processor
-        </div>
+        
+        <nav className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-slate-500">
+          <span className="text-blue-500">Dashboard</span>
+          <ChevronRight className="w-3 h-3" />
+          <span>Real-time Audit</span>
+        </nav>
       </header>
 
-      <main className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8">
+      <main className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-10">
         
-        {/* Left Column: Upload Area */}
-        <div className="lg:col-span-5 space-y-6">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
-            <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-              <Upload className="w-5 h-5 text-blue-400" />
-              Upload Bill
-            </h2>
+        {/* Step 1: Input Section */}
+        <div className="lg:col-span-5 space-y-8">
+          <section className="bg-slate-900/40 backdrop-blur-xl border border-white/5 rounded-3xl p-8 shadow-2xl">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-bold flex items-center gap-3">
+                <Upload className="w-5 h-5 text-blue-400" />
+                Input Source
+              </h2>
+              {image && (
+                <button 
+                  onClick={resetTool}
+                  className="text-xs text-slate-500 hover:text-red-400 flex items-center gap-1 transition-colors"
+                >
+                  <RefreshCcw className="w-3 h-3" /> Reset
+                </button>
+              )}
+            </div>
             
             {!image ? (
               <div 
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={onDrop}
                 onClick={() => fileInputRef.current.click()}
-                className="border-2 border-dashed border-slate-700 hover:border-blue-500/50 bg-slate-800/30 rounded-xl p-12 transition-all cursor-pointer group text-center"
+                className="group relative border-2 border-dashed border-slate-800 hover:border-blue-500/40 bg-slate-950/50 rounded-2xl p-16 transition-all duration-300 cursor-pointer text-center"
               >
                 <input 
                   type="file" 
@@ -158,148 +220,163 @@ const App = () => {
                   onChange={(e) => handleFile(e.target.files[0])} 
                   accept="image/*"
                 />
-                <div className="bg-slate-800 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
-                  <FileText className="w-8 h-8 text-slate-400 group-hover:text-blue-400" />
+                <div className="mb-6 relative">
+                  <div className="absolute inset-0 bg-blue-500/20 blur-2xl group-hover:bg-blue-500/40 transition-all rounded-full" />
+                  <div className="relative bg-slate-900 w-20 h-20 rounded-2xl flex items-center justify-center mx-auto border border-white/5 group-hover:-translate-y-1 transition-transform">
+                    <FileText className="w-10 h-10 text-slate-400 group-hover:text-blue-400 transition-colors" />
+                  </div>
                 </div>
-                <p className="text-slate-300 font-medium">Drag and drop your bill image</p>
-                <p className="text-slate-500 text-sm mt-1">PNG, JPG or JPEG supported</p>
+                <p className="text-slate-200 font-bold text-lg">Drop bill screenshot</p>
+                <p className="text-slate-500 text-sm mt-2 font-medium">Automatic recognition enabled</p>
               </div>
             ) : (
-              <div className="relative rounded-xl overflow-hidden border border-slate-700 bg-black">
-                <img src={image} alt="Uploaded Bill" className="w-full h-64 object-contain opacity-80" />
-                <button 
-                  onClick={() => {setImage(null); setBase64Image(null); setResults(null);}}
-                  className="absolute top-2 right-2 p-1.5 bg-slate-900/80 rounded-full hover:bg-red-500 transition-colors"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-slate-900 to-transparent p-4">
-                  <button 
-                    onClick={analyzeBill}
-                    disabled={isAnalyzing}
-                    className="w-full py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 rounded-lg font-bold flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-600/20"
-                  >
-                    {isAnalyzing ? (
-                      <>
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                        Analyzing Data...
-                      </>
-                    ) : (
-                      <>
-                        <Activity className="w-5 h-5" />
-                        Verify Tariff Now
-                      </>
-                    )}
-                  </button>
+              <div className="space-y-6">
+                <div className="relative rounded-2xl overflow-hidden aspect-[4/3] border border-white/5 shadow-inner bg-black">
+                  <img src={image} alt="Utility Bill" className="w-full h-full object-contain opacity-90" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/20" />
+                  
+                  {isAnalyzing && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/60 backdrop-blur-[2px]">
+                      <Loader2 className="w-10 h-10 text-blue-500 animate-spin mb-4" />
+                      <p className="text-white font-bold animate-pulse">Scanning Components...</p>
+                    </div>
+                  )}
                 </div>
+
+                <button 
+                  onClick={analyzeBill}
+                  disabled={isAnalyzing}
+                  className="w-full group py-4 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 rounded-xl font-black text-white flex items-center justify-center gap-3 transition-all active:scale-[0.98] shadow-xl shadow-blue-600/20"
+                >
+                  {isAnalyzing ? "Processing..." : (
+                    <>
+                      Verify Tariff Breakdown
+                      <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                    </>
+                  )}
+                </button>
               </div>
             )}
 
             {error && (
-              <div className="mt-4 p-4 bg-red-500/10 border border-red-500/50 rounded-lg flex items-start gap-3 text-red-400 text-sm">
-                <AlertCircle className="w-5 h-5 shrink-0" />
-                <p>{error}</p>
+              <div className="mt-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl flex items-start gap-4 text-red-400 text-sm animate-in fade-in zoom-in-95">
+                <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+                <p className="font-medium">{error}</p>
               </div>
             )}
-          </div>
+          </section>
 
-          <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-6">
-            <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">How it works</h3>
-            <div className="space-y-4">
-              <div className="flex gap-4">
-                <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-xs font-bold text-blue-400">1</div>
-                <div>
-                  <p className="text-sm font-medium">Visual Recognition</p>
-                  <p className="text-xs text-slate-500">Upload your bill screenshot for deep AI scanning.</p>
+          <section className="bg-slate-900/20 border border-white/5 rounded-3xl p-8">
+            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-6">Storyline Logic</h3>
+            <div className="grid gap-6">
+              {[
+                { title: "Visual Scan", desc: "OCR isolating billing metrics" },
+                { title: "Cost Mapping", desc: "Segmenting fixed vs variable fees" },
+                { title: "True Tariff", desc: "Calculating effective cost/kWh" }
+              ].map((step, i) => (
+                <div key={i} className="flex gap-4">
+                  <div className="flex-none w-10 h-10 rounded-xl bg-slate-900 border border-white/5 flex items-center justify-center text-blue-400 font-bold shadow-lg">
+                    {i + 1}
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-200">{step.title}</h4>
+                    <p className="text-xs text-slate-500 font-medium">{step.desc}</p>
+                  </div>
                 </div>
-              </div>
-              <div className="flex gap-4">
-                <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-xs font-bold text-blue-400">2</div>
-                <div>
-                  <p className="text-sm font-medium">Cost Component Mapping</p>
-                  <p className="text-xs text-slate-500">We isolate energy charges from taxes and fixed fees.</p>
-                </div>
-              </div>
-              <div className="flex gap-4">
-                <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-xs font-bold text-blue-400">3</div>
-                <div>
-                  <p className="text-sm font-medium">Effective Rate Audit</p>
-                  <p className="text-xs text-slate-500">Detailed verification of your true cost per kWh.</p>
-                </div>
-              </div>
+              ))}
             </div>
-          </div>
+          </section>
         </div>
 
-        {/* Right Column: Results Area */}
+        {/* Step 2: Analysis Section */}
         <div className="lg:col-span-7">
           {!results ? (
-            <div className="h-full min-h-[400px] border border-slate-800 bg-slate-900/30 rounded-2xl flex flex-col items-center justify-center text-center p-12 opacity-50">
-              <BarChart3 className="w-16 h-16 text-slate-700 mb-4" />
-              <h3 className="text-xl font-semibold text-slate-500">No Analysis Results</h3>
-              <p className="text-slate-600 max-w-xs mt-2">Upload a bill and click "Verify" to see your effective tariff breakdown.</p>
+            <div className="h-full min-h-[500px] border border-white/5 bg-slate-900/10 rounded-3xl flex flex-col items-center justify-center text-center p-12 group transition-all">
+              <div className="relative mb-8">
+                <div className="absolute inset-0 bg-blue-500/5 blur-3xl rounded-full" />
+                <BarChart3 className="w-24 h-24 text-slate-800 relative group-hover:scale-110 transition-transform duration-500" />
+              </div>
+              <h3 className="text-2xl font-bold text-slate-400 mb-3">Awaiting Verification</h3>
+              <p className="text-slate-600 max-w-sm leading-relaxed">
+                Upload a utility bill screenshot to generate a detailed cost analysis and true tariff report.
+              </p>
             </div>
           ) : (
-            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
+            <div className="space-y-8 animate-in fade-in slide-in-from-bottom-6 duration-1000">
               
-              {/* Hero Stats */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl p-6 shadow-xl relative overflow-hidden">
-                  <div className="absolute top-0 right-0 p-8 opacity-10">
-                    <Zap className="w-24 h-24 text-white" />
+              {/* Primary Metrics */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="bg-gradient-to-br from-blue-700 via-blue-600 to-indigo-700 rounded-3xl p-8 shadow-2xl relative overflow-hidden group">
+                  <div className="absolute -right-4 -top-4 opacity-10 group-hover:rotate-12 transition-transform duration-700">
+                    <Zap className="w-40 h-40 text-white" />
                   </div>
-                  <p className="text-blue-100 text-sm font-medium mb-1">Effective Tariff</p>
+                  <p className="text-blue-100/70 text-sm font-bold uppercase tracking-widest mb-2">Effective Tariff</p>
                   <div className="flex items-baseline gap-2">
-                    <h2 className="text-4xl font-bold text-white">
-                      {results.currency}{(results.total_amount_due / results.total_consumption_kwh).toFixed(3)}
+                    <h2 className="text-5xl font-black text-white">
+                      {results.currency}{(results.total_amount_due / (results.total_consumption_kwh || 1)).toFixed(3)}
                     </h2>
-                    <span className="text-blue-200">/ kWh</span>
+                    <span className="text-blue-100 text-lg font-bold">/ kWh</span>
                   </div>
-                  <div className="mt-4 flex items-center gap-2 text-xs bg-white/10 w-fit px-2 py-1 rounded-md backdrop-blur-md">
-                    <span>Includes all fees & taxes</span>
+                  <div className="mt-8 flex items-center justify-between">
+                    <div className="flex items-center gap-2 bg-white/10 px-3 py-1.5 rounded-lg backdrop-blur-md border border-white/10">
+                      <Check className="w-4 h-4 text-blue-200" />
+                      <span className="text-xs font-bold text-white uppercase tracking-tighter">Verified Audit</span>
+                    </div>
+                    <button 
+                      onClick={copyToClipboard}
+                      className="p-2 hover:bg-white/10 rounded-lg transition-colors text-white"
+                    >
+                      {copied ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
+                    </button>
                   </div>
                 </div>
 
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between">
+                <div className="bg-slate-900/60 border border-white/5 rounded-3xl p-8 flex flex-col justify-between shadow-xl">
                   <div className="flex justify-between items-start">
                     <div>
-                      <p className="text-slate-500 text-sm font-medium">Total Bill</p>
-                      <h3 className="text-2xl font-bold">{results.currency}{results.total_amount_due}</h3>
+                      <p className="text-slate-500 text-sm font-bold uppercase tracking-widest mb-1">Total Bill Amount</p>
+                      <h3 className="text-3xl font-black text-white">{results.currency}{results.total_amount_due}</h3>
+                      <p className="text-xs text-slate-500 mt-2 font-medium">{results.billing_period || 'Current Billing Cycle'}</p>
                     </div>
-                    <div className="p-2 bg-slate-800 rounded-lg">
-                      <PieChart className="w-5 h-5 text-slate-400" />
+                    <div className="p-3 bg-slate-950 rounded-2xl shadow-inner border border-white/5">
+                      <PieChart className="w-6 h-6 text-indigo-400" />
                     </div>
                   </div>
-                  <div className="mt-4 pt-4 border-t border-slate-800 flex justify-between items-center">
-                    <span className="text-sm text-slate-500">Consumption</span>
-                    <span className="font-semibold">{results.total_consumption_kwh} kWh</span>
+                  <div className="mt-10 pt-6 border-t border-white/5 flex justify-between items-center">
+                    <div className="flex flex-col">
+                      <span className="text-xs font-bold text-slate-500 uppercase tracking-tighter">Total Usage</span>
+                      <span className="text-xl font-black text-slate-200">{results.total_consumption_kwh} <span className="text-sm font-medium text-slate-500">kWh</span></span>
+                    </div>
+                    <Activity className="w-8 h-8 text-blue-500/30" />
                   </div>
                 </div>
               </div>
 
-              {/* Detailed Breakdown */}
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
-                <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-lg font-semibold flex items-center gap-2">
-                    <BarChart3 className="w-5 h-5 text-indigo-400" />
-                    Cost Breakdown
+              {/* Breakdown List */}
+              <div className="bg-slate-900/40 backdrop-blur-xl border border-white/5 rounded-3xl p-8 shadow-2xl">
+                <div className="flex items-center justify-between mb-10">
+                  <h3 className="text-xl font-bold flex items-center gap-3">
+                    <BarChart3 className="w-6 h-6 text-blue-400" />
+                    Cost Attribution
                   </h3>
-                  <span className="text-xs text-slate-500 uppercase tracking-widest">Audited Components</span>
+                  <div className="text-[10px] font-black text-slate-600 bg-slate-950 px-3 py-1 rounded-full uppercase tracking-widest border border-white/5">
+                    Live Data
+                  </div>
                 </div>
 
-                <div className="space-y-6">
+                <div className="grid gap-8">
                   {results.cost_breakdown.map((item, idx) => (
-                    <div key={idx} className="space-y-2">
-                      <div className="flex justify-between text-sm">
-                        <span className="text-slate-300 font-medium">{item.category}</span>
-                        <div className="flex gap-4">
-                          <span className="text-slate-500">{item.percentage}%</span>
-                          <span className="text-slate-100 font-semibold">{results.currency}{item.amount.toFixed(2)}</span>
+                    <div key={idx} className="group">
+                      <div className="flex justify-between items-end mb-3">
+                        <div className="flex flex-col">
+                          <span className="text-sm font-black text-slate-200 group-hover:text-blue-400 transition-colors uppercase tracking-tight">{item.category}</span>
+                          <span className="text-[10px] text-slate-500 font-bold uppercase">{results.currency}{item.amount.toFixed(2)} total</span>
                         </div>
+                        <span className="text-lg font-black text-slate-400">{item.percentage}%</span>
                       </div>
-                      <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                      <div className="h-3 bg-slate-950 rounded-full overflow-hidden p-0.5 border border-white/5">
                         <div 
-                          className="h-full bg-blue-500 rounded-full transition-all duration-1000"
+                          className="h-full bg-gradient-to-r from-blue-600 to-indigo-500 rounded-full transition-all duration-1000 ease-out shadow-[0_0_15px_rgba(37,99,235,0.4)]"
                           style={{ width: `${item.percentage}%` }}
                         />
                       </div>
@@ -308,19 +385,20 @@ const App = () => {
                 </div>
               </div>
 
-              {/* Insights */}
-              <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-6">
-                <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">Module Insights</h3>
-                <div className="flex items-start gap-4 p-4 bg-blue-500/5 rounded-xl border border-blue-500/20">
-                  <div className="p-2 bg-blue-500/10 rounded-lg shrink-0">
-                    <Activity className="w-5 h-5 text-blue-400" />
+              {/* Final Intelligence Box */}
+              <div className="relative group">
+                <div className="absolute inset-0 bg-blue-500/10 blur-xl opacity-0 group-hover:opacity-100 transition-opacity rounded-3xl" />
+                <div className="relative bg-slate-900 border border-white/10 rounded-3xl p-8 flex items-start gap-6">
+                  <div className="shrink-0 p-4 bg-blue-500/10 rounded-2xl border border-blue-500/20">
+                    <Activity className="w-8 h-8 text-blue-400" />
                   </div>
-                  <div>
-                    <p className="text-sm text-slate-300 leading-relaxed">
-                      Your effective rate is <span className="text-blue-400 font-bold">{results.currency}{(results.total_amount_due / results.total_consumption_kwh).toFixed(3)}</span>. 
-                      {parseFloat(results.cost_breakdown.find(i => i.category.toLowerCase().includes('tax') || i.category.toLowerCase().includes('surcharge'))?.percentage || 0) > 15 ? 
-                        " Non-energy costs represent a significant portion of your bill. Consider auditing your fixed charges." : 
-                        " Most of your costs are tied directly to consumption."}
+                  <div className="space-y-2">
+                    <h4 className="font-black text-slate-200 uppercase text-xs tracking-widest">Efficiency Insight</h4>
+                    <p className="text-slate-400 leading-relaxed text-sm font-medium">
+                      Your effective rate is <span className="text-white font-black">{results.currency}{(results.total_amount_due / results.total_consumption_kwh).toFixed(3)}</span>. 
+                      {parseFloat(results.cost_breakdown.find(i => i.category.toLowerCase().includes('tax') || i.category.toLowerCase().includes('surcharge'))?.percentage || 0) > 20 ? 
+                        " Overhead costs (taxes/fees) are exceptionally high. We recommend auditing your fixed capacity charges." : 
+                        " Your billing is primarily consumption-driven. Improving energy efficiency is the most direct way to lower costs."}
                     </p>
                   </div>
                 </div>
@@ -331,9 +409,12 @@ const App = () => {
         </div>
       </main>
 
-      {/* Footer */}
-      <footer className="max-w-6xl mx-auto mt-20 pt-8 border-t border-slate-900 text-center text-slate-600 text-sm">
-        <p>&copy; 2026 GCC Utility Processor - Tariff Verification Engine</p>
+      <footer className="max-w-7xl mx-auto mt-24 pb-12 text-center">
+        <div className="inline-flex items-center gap-2 px-4 py-2 bg-slate-900 border border-white/5 rounded-full text-[10px] font-black text-slate-600 uppercase tracking-widest shadow-xl">
+          <Zap className="w-3 h-3 text-blue-500" />
+          Powered by GCC Utility Processor Engine v2.5
+        </div>
+        <p className="mt-6 text-slate-700 text-xs font-bold uppercase tracking-tight">© 2026 TariffVerify Global Solutions</p>
       </footer>
     </div>
   );
