@@ -291,8 +291,8 @@
 
         const steps = [
             { title: "Visual Scan", desc: "OCR isolating billing metrics" },
-            { title: "Cost Mapping", desc: "Segmenting fixed vs variable fees" },
-            { title: "True Tariff", desc: "Calculating effective cost/kWh" }
+            { title: "Cost Mapping", desc: "Segmenting components" },
+            { title: "Audit Verification", desc: "Calculating effective tariff rate" }
         ];
 
         document.getElementById('stepsList').innerHTML = steps.map((step, i) => `
@@ -362,7 +362,18 @@
             errorBox.classList.add('hidden');
             verifyBtn.disabled = true;
 
-            const prompt = `Perform a high-precision electricity tariff audit on this GCC utility document. Return ONLY JSON: { "total_consumption_kwh": number, "total_amount_due": number, "currency": "string", "billing_period": "string", "cost_breakdown": [{"category": "string", "amount": number}] }`;
+            const prompt = `Perform a high-precision utility tariff audit on this GCC document.
+            First, detect if this is an Electricity bill or a Water bill.
+            Return ONLY JSON: 
+            { 
+                "utility_type": "Electricity" | "Water",
+                "total_consumption": number, 
+                "unit": "kWh" | "KL",
+                "total_amount_due": number, 
+                "currency": "string", 
+                "billing_period": "string", 
+                "cost_breakdown": [{"category": "string", "amount": number}] 
+            }`;
 
             try {
                 const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${finalKey}`, {
@@ -393,7 +404,8 @@
 
         function renderResults(results) {
             const total = results.total_amount_due || 1;
-            const consumption = results.total_consumption_kwh || 1;
+            const consumption = results.total_consumption || 1;
+            const unit = results.unit || (results.utility_type === 'Water' ? 'KL' : 'kWh');
             const effective = (total / consumption).toFixed(3);
             
             const sortedBreakdown = [...(results.cost_breakdown || [])].sort((a, b) => b.amount - a.amount);
@@ -408,6 +420,10 @@
             });
 
             const pieGradient = `conic-gradient(${gradientParts.join(', ')})`;
+
+            const benchmarkText = results.utility_type === 'Water' 
+                ? "Average Cost for Water Joburg:<br>R112.00/KL (Jan 2026)" 
+                : "Average Effective Tariff —<br>Primary School Joburg: R5.23 (Jan 2026)";
 
             const breakdownHtml = sortedBreakdown.map((item, idx) => {
                 const pct = ((item.amount / total) * 100).toFixed(1);
@@ -436,14 +452,14 @@
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div class="bg-gradient-to-br from-suntricity-500 to-emerald-700 rounded-3xl p-6 shadow-2xl relative overflow-hidden group">
                             <i data-lucide="zap" class="absolute -right-4 -top-4 w-32 h-32 text-white opacity-10 group-hover:rotate-12 transition-transform duration-700"></i>
-                            <p class="text-lime-100/70 text-[10px] font-black uppercase tracking-widest mb-1">Effective Tariff</p>
+                            <p class="text-lime-100/70 text-[10px] font-black uppercase tracking-widest mb-1">Effective Tariff (${results.utility_type})</p>
                             <div class="flex items-baseline gap-1.5">
                                 <h2 class="text-4xl font-black text-white tracking-tighter">${results.currency}${effective}</h2>
-                                <span class="text-lime-100 text-xs font-bold uppercase tracking-tighter">/ kWh</span>
+                                <span class="text-lime-100 text-xs font-bold uppercase tracking-tighter">/ ${unit}</span>
                             </div>
                             
                             <p class="mt-3 text-[9px] font-black text-lime-200/90 uppercase tracking-tighter leading-tight">
-                                Average Effective Tariff —<br>Primary School Joburg: R5.23 (Jan 2026)
+                                ${benchmarkText}
                             </p>
 
                             <div class="mt-6 flex items-center justify-between">
@@ -462,7 +478,7 @@
                             <div class="mt-6 pt-4 border-t border-slate-200 dark:border-white/5 flex justify-between items-center">
                                 <div class="flex flex-col">
                                     <span class="text-[9px] font-black text-slate-500 uppercase tracking-widest">Total Usage</span>
-                                    <span class="text-lg font-black dark:text-slate-200 text-slate-800 tracking-tighter">${results.total_consumption_kwh} <span class="text-xs font-medium text-slate-500">kWh</span></span>
+                                    <span class="text-lg font-black dark:text-slate-200 text-slate-800 tracking-tighter">${results.total_consumption} <span class="text-xs font-medium text-slate-500">${unit}</span></span>
                                 </div>
                                 <i data-lucide="activity" class="w-6 h-6 text-suntricity-500/30"></i>
                             </div>
@@ -505,8 +521,8 @@
                         <div class="space-y-1">
                             <h4 class="font-black dark:text-slate-200 text-slate-800 uppercase text-[9px] tracking-widest">Efficiency Insight</h4>
                             <p class="text-slate-500 leading-relaxed text-[11px] font-medium">
-                                Effective rate: <span class="dark:text-white text-slate-900 font-black">${results.currency}${effective}</span>. 
-                                <span class="text-suntricity-500 font-bold">${((sortedBreakdown.find(i => i.category.toLowerCase().includes('energy') || i.category.toLowerCase().includes('consumption'))?.amount / total) * 100).toFixed(0)}%</span> of total costs are attributed to direct energy consumption.
+                                Effective rate: <span class="dark:text-white text-slate-900 font-black">${results.currency}${effective}</span> per ${unit}. 
+                                By isolating fees, we can see exactly where the overhead costs are being generated for your ${results.utility_type.toLowerCase()} utility.
                             </p>
                         </div>
                     </div>
