@@ -199,17 +199,24 @@
         fileInput.onchange = (e) => handleFile(e.target.files[0]);
 
         function handleFile(file) {
-            if (file && (file.type.startsWith('image/') || file.type === 'application/pdf')) {
+            if (!file) return;
+
+            const isImage = file.type.startsWith('image/');
+            const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+
+            if (isImage || isPdf) {
                 const reader = new FileReader();
                 reader.onload = (e) => {
                     base64Data = e.target.result.split(',')[1];
-                    currentMimeType = file.type;
+                    // Force MIME type to application/pdf if it's a PDF but misidentified
+                    currentMimeType = isPdf ? 'application/pdf' : file.type;
 
                     dropZone.classList.add('hidden');
                     previewContainer.classList.remove('hidden');
                     resetBtn.classList.remove('hidden');
+                    errorBox.classList.add('hidden');
 
-                    if (file.type === 'application/pdf') {
+                    if (isPdf) {
                         billPreview.classList.add('hidden');
                         pdfPlaceholder.classList.remove('hidden');
                         pdfNameDisplay.innerText = file.name;
@@ -255,7 +262,7 @@
             errorBox.classList.add('hidden');
             verifyBtn.disabled = true;
 
-            const prompt = `Extract electricity billing data from this ${currentMimeType === 'application/pdf' ? 'PDF' : 'image'} and return ONLY a JSON object:
+            const prompt = `Extract electricity billing data from this document and return ONLY a JSON object:
             {
                 "total_consumption_kwh": number,
                 "total_amount_due": number,
