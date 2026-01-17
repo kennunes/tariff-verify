@@ -65,21 +65,26 @@
                 
                 <!-- Drop Zone -->
                 <div id="dropZone" class="group relative border-2 border-dashed border-slate-800 hover:border-blue-500/40 bg-slate-950/50 rounded-2xl p-16 transition-all duration-300 cursor-pointer text-center">
-                    <input type="file" id="fileInput" class="hidden" accept="image/*">
+                    <input type="file" id="fileInput" class="hidden" accept="image/*,application/pdf">
                     <div class="mb-6 relative">
                         <div class="absolute inset-0 bg-blue-500/20 blur-2xl group-hover:bg-blue-500/40 transition-all rounded-full"></div>
                         <div class="relative bg-slate-900 w-20 h-20 rounded-2xl flex items-center justify-center mx-auto border border-white/5 group-hover:-translate-y-1 transition-transform">
                             <i data-lucide="file-text" class="w-10 h-10 text-slate-400 group-hover:text-blue-400 transition-colors"></i>
                         </div>
                     </div>
-                    <p class="text-slate-200 font-bold text-lg">Drop bill screenshot</p>
+                    <p class="text-slate-200 font-bold text-lg">Drop bill screenshot or PDF</p>
                     <p class="text-slate-500 text-sm mt-2 font-medium">Automatic recognition enabled</p>
                 </div>
 
                 <!-- Preview State -->
                 <div id="previewContainer" class="hidden space-y-6">
                     <div class="relative rounded-2xl overflow-hidden aspect-[4/3] border border-white/5 shadow-inner bg-black">
-                        <img id="billPreview" src="" alt="Utility Bill" class="w-full h-full object-contain opacity-90">
+                        <img id="billPreview" src="" alt="Utility Bill" class="hidden w-full h-full object-contain opacity-90">
+                        <div id="pdfPlaceholder" class="hidden w-full h-full flex flex-col items-center justify-center bg-slate-900">
+                             <i data-lucide="file-text" class="w-20 h-20 text-blue-500 mb-4"></i>
+                             <p id="pdfName" class="text-slate-300 font-bold px-4 text-center truncate w-full"></p>
+                             <p class="text-slate-500 text-xs mt-2 uppercase tracking-widest">PDF Document Loaded</p>
+                        </div>
                         <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/20"></div>
                         
                         <!-- Analyzing Overlay -->
@@ -120,7 +125,7 @@
                 </div>
                 <h3 class="text-2xl font-bold text-slate-400 mb-3">Awaiting Verification</h3>
                 <p class="text-slate-600 max-w-sm leading-relaxed">
-                    Upload a utility bill screenshot to generate a detailed cost analysis and true tariff report.
+                    Upload a utility bill screenshot or PDF to generate a detailed cost analysis and true tariff report.
                 </p>
             </div>
         </div>
@@ -140,6 +145,8 @@
         const fileInput = document.getElementById('fileInput');
         const previewContainer = document.getElementById('previewContainer');
         const billPreview = document.getElementById('billPreview');
+        const pdfPlaceholder = document.getElementById('pdfPlaceholder');
+        const pdfNameDisplay = document.getElementById('pdfName');
         const verifyBtn = document.getElementById('verifyBtn');
         const loaderOverlay = document.getElementById('loaderOverlay');
         const resultsArea = document.getElementById('resultsArea');
@@ -147,7 +154,8 @@
         const errorText = document.getElementById('errorText');
         const resetBtn = document.getElementById('resetBtn');
 
-        let base64Image = null;
+        let base64Data = null;
+        let currentMimeType = null;
 
         // Initialize Lucide
         lucide.createIcons();
@@ -191,16 +199,30 @@
         fileInput.onchange = (e) => handleFile(e.target.files[0]);
 
         function handleFile(file) {
-            if (file && file.type.startsWith('image/')) {
+            if (file && (file.type.startsWith('image/') || file.type === 'application/pdf')) {
                 const reader = new FileReader();
                 reader.onload = (e) => {
-                    base64Image = e.target.result.split(',')[1];
-                    billPreview.src = e.target.result;
+                    base64Data = e.target.result.split(',')[1];
+                    currentMimeType = file.type;
+
                     dropZone.classList.add('hidden');
                     previewContainer.classList.remove('hidden');
                     resetBtn.classList.remove('hidden');
+
+                    if (file.type === 'application/pdf') {
+                        billPreview.classList.add('hidden');
+                        pdfPlaceholder.classList.remove('hidden');
+                        pdfNameDisplay.innerText = file.name;
+                    } else {
+                        pdfPlaceholder.classList.add('hidden');
+                        billPreview.classList.remove('hidden');
+                        billPreview.src = e.target.result;
+                    }
                 };
                 reader.readAsDataURL(file);
+            } else {
+                errorText.innerText = "Unsupported file type. Please use PNG, JPG, or PDF.";
+                errorBox.classList.remove('hidden');
             }
         }
 
@@ -208,6 +230,8 @@
             dropZone.classList.remove('hidden');
             previewContainer.classList.add('hidden');
             resetBtn.classList.add('hidden');
+            base64Data = null;
+            currentMimeType = null;
             resultsArea.innerHTML = `
                 <div class="h-full min-h-[500px] border border-white/5 bg-slate-900/10 rounded-3xl flex flex-col items-center justify-center text-center p-12 group transition-all">
                     <div class="relative mb-8">
@@ -216,7 +240,7 @@
                     </div>
                     <h3 class="text-2xl font-bold text-slate-400 mb-3">Awaiting Verification</h3>
                     <p class="text-slate-600 max-w-sm leading-relaxed">
-                        Upload a utility bill screenshot to generate a detailed cost analysis and true tariff report.
+                        Upload a utility bill screenshot or PDF to generate a detailed cost analysis and true tariff report.
                     </p>
                 </div>
             `;
@@ -225,13 +249,13 @@
         }
 
         verifyBtn.onclick = async () => {
-            if (!base64Image) return;
+            if (!base64Data) return;
 
             loaderOverlay.classList.remove('hidden');
             errorBox.classList.add('hidden');
             verifyBtn.disabled = true;
 
-            const prompt = `Extract electricity billing data from this image and return ONLY a JSON object:
+            const prompt = `Extract electricity billing data from this ${currentMimeType === 'application/pdf' ? 'PDF' : 'image'} and return ONLY a JSON object:
             {
                 "total_consumption_kwh": number,
                 "total_amount_due": number,
@@ -249,7 +273,7 @@
                             role: "user",
                             parts: [
                                 { text: prompt },
-                                { inlineData: { mimeType: "image/png", data: base64Image } }
+                                { inlineData: { mimeType: currentMimeType, data: base64Data } }
                             ]
                         }],
                         generationConfig: { responseMimeType: "application/json" }
@@ -262,7 +286,8 @@
                 const results = JSON.parse(data.candidates[0].content.parts[0].text);
                 renderResults(results);
             } catch (err) {
-                errorText.innerText = "Audit failed. Ensure the image is a clear utility bill.";
+                console.error(err);
+                errorText.innerText = "Audit failed. Ensure the file is a clear utility bill.";
                 errorBox.classList.remove('hidden');
             } finally {
                 loaderOverlay.classList.add('hidden');
@@ -272,9 +297,10 @@
 
         function renderResults(results) {
             const total = results.total_amount_due || 1;
-            const effective = (results.total_amount_due / (results.total_consumption_kwh || 1)).toFixed(3);
+            const consumption = results.total_consumption_kwh || 1;
+            const effective = (total / consumption).toFixed(3);
             
-            const breakdownHtml = results.cost_breakdown.map(item => {
+            const breakdownHtml = (results.cost_breakdown || []).map(item => {
                 const pct = ((item.amount / total) * 100).toFixed(1);
                 return `
                     <div class="group">
