@@ -202,7 +202,7 @@
                         <i data-lucide="arrow-right" class="w-4 h-4 group-hover:translate-x-1 transition-transform"></i>
                     </button>
 
-                    <a href="https://www.suntricity.co.za" target="_blank" class="w-full group py-3.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 hover:border-suntricity-500 dark:hover:border-suntricity-500 rounded-xl font-black text-[11px] uppercase tracking-widest text-slate-600 dark:text-slate-400 hover:text-suntricity-500 dark:hover:text-suntricity-500 flex items-center justify-center gap-3 transition-all active:scale-[0.98] shadow-sm">
+                    <a href="https://www.suntricity.co.za" id="supplierLink" target="_blank" class="w-full group py-3.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 hover:border-suntricity-500 dark:hover:border-suntricity-500 rounded-xl font-black text-[11px] uppercase tracking-widest text-slate-600 dark:text-slate-400 hover:text-suntricity-500 dark:hover:text-suntricity-500 flex items-center justify-center gap-3 transition-all active:scale-[0.98] shadow-sm">
                         Contact Approved Solar PV Suppliers
                         <i data-lucide="external-link" class="w-4 h-4"></i>
                     </a>
@@ -267,6 +267,7 @@
         const keyInputField = document.getElementById('keyInputField');
         const solarRateField = document.getElementById('solarRateField');
         const keyStatus = document.getElementById('keyStatus');
+        const supplierLink = document.getElementById('supplierLink');
 
         lucide.createIcons();
 
@@ -376,6 +377,7 @@
             base64Data = null;
             window.lastResults = null;
             resultsArea.innerHTML = `<div class="h-full min-h-[450px] border border-slate-200 dark:border-white/5 bg-slate-200/10 dark:bg-slate-900/10 rounded-3xl flex flex-col items-center justify-center text-center p-12 group transition-all opacity-50"><i data-lucide="bar-chart-3" class="w-16 h-16 text-slate-300 dark:text-slate-800 mb-6"></i><h3 class="text-lg font-black text-slate-400 dark:text-slate-500 uppercase tracking-tight mb-2">Awaiting Verification</h3><p class="text-slate-400 dark:text-slate-600 max-w-xs text-[11px] font-medium">Upload a utility bill screenshot or PDF to generate a high-density cost analysis.</p></div>`;
+            supplierLink.innerHTML = 'Contact Approved Solar PV Suppliers <i data-lucide="external-link" class="w-4 h-4"></i>';
             lucide.createIcons();
             errorBox.classList.add('hidden');
         }
@@ -455,6 +457,13 @@
 
             const solarSavingsPerUnit = Math.max(0, effective - solarPVRate).toFixed(2);
             const solarTotalMonthlySavings = (solarSavingsPerUnit * consumption).toFixed(2);
+
+            // Update supplier link text based on utility type
+            if (results.utility_type === 'Water') {
+                supplierLink.innerHTML = 'Contact Approved Water Suppliers <i data-lucide="external-link" class="w-4 h-4"></i>';
+            } else {
+                supplierLink.innerHTML = 'Contact Approved Solar PV Suppliers <i data-lucide="external-link" class="w-4 h-4"></i>';
+            }
 
             const breakdownHtml = sortedBreakdown.map((item, idx) => {
                 const pct = ((item.amount / total) * 100).toFixed(1);
