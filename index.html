@@ -1,611 +1,386 @@
-<!DOCTYPE html>
-<html lang="en" class="dark">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SolarPV Tariff Comparison - GCC Utility Processor</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    colors: {
-                        suntricity: {
-                            50: '#f7fee7',
-                            100: '#ecfccb',
-                            200: '#d9f99d',
-                            300: '#bef264',
-                            400: '#a3e635',
-                            500: '#84cc16',
-                            600: '#65a30d',
-                            700: '#4d7c0f',
-                        }
-                    }
-                }
-            }
-        }
-    </script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;900&display=swap');
-        
-        body {
-            font-family: 'Inter', sans-serif;
-            font-size: 0.875rem;
-            transition: background-color 0.3s ease, color 0.3s ease;
-        }
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  Zap, 
+  FileText, 
+  Upload, 
+  RefreshCcw, 
+  Settings, 
+  AlertCircle, 
+  Loader2, 
+  PieChart, 
+  Calculator, 
+  X, 
+  CheckCircle2,
+  Info,
+  ArrowRight,
+  Sun,
+  Moon
+} from 'lucide-react';
 
-        .glass-panel {
-            transition: all 0.3s ease;
-        }
+/**
+ * Solar Invoice Auditor (Phase 1 Standalone) - Enhanced with Day/Night Mode
+ * - Focused exclusively on Municipal Tariff Extraction.
+ * - Uses Gemini Vision API for high-precision OCR and analysis.
+ * - Hydration-safe theme switching for Vercel stability.
+ */
 
-        /* Dark Mode Styles */
-        .dark body { background-color: #020617; color: #f1f5f9; }
-        .dark .glass-panel {
-            background: rgba(15, 23, 42, 0.4);
-            backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-        }
+const CURRENCY_SYMBOL = "R";
 
-        /* Light Mode Styles */
-        html:not(.dark) body { background-color: #f8fafc; color: #0f172a; }
-        html:not(.dark) .glass-panel {
-            background: rgba(255, 255, 255, 0.8);
-            backdrop-filter: blur(12px);
-            border: 1px solid rgba(0, 0, 0, 0.05);
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-        }
+const App = () => {
+  const fileInputRef = useRef(null);
 
-        .animate-pulse-slow {
-            animation: pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-        }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: .5; }
-        }
+  // --- UI & Configuration State ---
+  const [isDarkMode, setIsDarkMode] = useState(true);
+  const [apiKey, setApiKey] = useState("");
+  const [isConfigOpen, setIsConfigOpen] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
+  const [notification, setNotification] = useState(null);
+  
+  // --- Audit State ---
+  const [file, setFile] = useState(null);
+  const [base64Data, setBase64Data] = useState(null);
+  const [mimeType, setMimeType] = useState("");
+  const [isAuditing, setIsAuditing] = useState(false);
+  const [error, setError] = useState(null);
+  const [auditResults, setAuditResults] = useState(null);
 
-        pre::-webkit-scrollbar { width: 6px; }
-        pre::-webkit-scrollbar-track { background: transparent; }
-        .dark pre::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 10px; }
-        html:not(.dark) pre::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+  // Hydration Gate & Settings persistence
+  useEffect(() => {
+    setIsMounted(true);
+    if (typeof window !== 'undefined') {
+      const storedKey = localStorage.getItem('solar_audit_api_key');
+      if (storedKey) setApiKey(storedKey);
+      
+      const storedTheme = localStorage.getItem('solar_audit_theme');
+      if (storedTheme === 'light') setIsDarkMode(false);
+    }
+  }, []);
 
-        .pie-chart {
-            width: 180px;
-            height: 180px;
-            border-radius: 50%;
-            position: relative;
-            transition: transform 0.5s ease;
-        }
-        .pie-chart::after {
-            content: '';
-            position: absolute;
-            inset: 35px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .dark .pie-chart::after { background: #0f172a; box-shadow: inset 0 0 10px rgba(0,0,0,0.5); }
-        html:not(.dark) .pie-chart::after { background: #ffffff; box-shadow: inset 0 0 5px rgba(0,0,0,0.1); }
-    </style>
-</head>
-<body class="selection:bg-suntricity-500/30 min-h-screen p-4 md:p-8">
+  // Persist theme choice
+  useEffect(() => {
+    if (isMounted) {
+      localStorage.setItem('solar_audit_theme', isDarkMode ? 'dark' : 'light');
+    }
+  }, [isDarkMode, isMounted]);
 
-    <!-- Header -->
-    <header class="max-w-7xl mx-auto mb-12 flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div class="flex items-center gap-4">
-            <div class="p-2.5 bg-gradient-to-tr from-suntricity-500 to-emerald-600 rounded-xl shadow-2xl shadow-suntricity-500/20 ring-1 ring-white/10">
-                <i data-lucide="zap" class="w-6 h-6 text-white fill-white/20"></i>
-            </div>
-            <div>
-                <h1 class="text-xl font-black tracking-tight dark:text-white text-slate-900 leading-tight">
-                    SolarPV <span class="text-suntricity-500">Tariff Comparison</span>
-                </h1>
-                <p class="text-slate-500 text-[10px] font-bold uppercase tracking-wider">GCC Industrial Utility Processor</p>
-            </div>
+  const handleFileUpload = (e) => {
+    const uploadedFile = e.target.files[0];
+    if (!uploadedFile) return;
+
+    if (uploadedFile.size > 4 * 1024 * 1024) {
+      setError("File too large. Please upload a document under 4MB.");
+      return;
+    }
+
+    setFile(uploadedFile);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      if (event.target && event.target.result) {
+        const resultString = event.target.result.toString();
+        const b64 = resultString.split(',')[1];
+        setBase64Data(b64);
+        setMimeType(uploadedFile.type || 'image/png');
+        setError(null);
+      }
+    };
+    reader.onerror = () => setError("Failed to read file.");
+    reader.readAsDataURL(uploadedFile);
+  };
+
+  const runAudit = async () => {
+    if (!apiKey) {
+      setError("API Key missing. Click the settings icon to configure.");
+      return;
+    }
+    if (!base64Data) return;
+
+    setIsAuditing(true);
+    setError(null);
+
+    const prompt = `Analyze this municipal utility bill for a school and extract:
+    1. Billing Month
+    2. Total Consumption (kWh)
+    3. Total Amount Due (Currency: R)
+    4. Detailed Cost Breakdown (Energy Charges, Fixed Fees, VAT, Levies)
+    
+    Return ONLY JSON: { 
+      "utility_type": "Electricity",
+      "total_consumption": number, 
+      "unit": "kWh",
+      "total_amount_due": number, 
+      "currency": "R", 
+      "billing_month": string,
+      "billing_period": string, 
+      "cost_breakdown": [
+        {"category": string, "amount": number}
+      ] 
+    }`;
+
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            role: "user",
+            parts: [{ text: prompt }, { inlineData: { mimeType, data: base64Data } }]
+          }],
+          generationConfig: { responseMimeType: "application/json" }
+        })
+      });
+
+      const data = await response.json();
+      if (data.error) throw new Error(data.error.message);
+
+      const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!rawText) throw new Error("Document analysis failed. Ensure text is clear.");
+
+      const cleanJson = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
+      const results = JSON.parse(cleanJson);
+      
+      if (!results.total_consumption || !results.total_amount_due) {
+        throw new Error("Could not find total consumption or amount due.");
+      }
+
+      setAuditResults(results);
+      setNotification("Invoice Audited Successfully");
+    } catch (err) {
+      console.error("Audit failure:", err);
+      setError(`Audit Failed: ${err.message || "Unknown error"}`);
+    } finally {
+      setIsAuditing(false);
+    }
+  };
+
+  const resetAudit = () => {
+    setAuditResults(null);
+    setFile(null);
+    setBase64Data(null);
+    setError(null);
+  };
+
+  if (!isMounted) return null;
+
+  return (
+    <div className={`min-h-screen transition-colors duration-500 font-sans p-4 md:p-8 ${isDarkMode ? 'bg-[#020617] text-slate-200' : 'bg-slate-50 text-slate-800'}`}>
+      {/* Header */}
+      <header className="max-w-4xl mx-auto mb-12 flex justify-between items-center">
+        <div className="flex items-center gap-4">
+          <div className="p-3 bg-lime-500 rounded-2xl shadow-lg shadow-lime-500/20 text-white">
+            <Zap className="w-6 h-6" />
+          </div>
+          <div>
+            <h1 className={`text-xl font-black tracking-tight uppercase ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>Phase 1: Invoice Auditor</h1>
+            <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest">Baseline Tariff Extraction</p>
+          </div>
         </div>
         
-        <div class="flex flex-col md:items-end gap-3">
-            <div class="flex items-center gap-4">
-                <nav class="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-widest text-slate-500">
-                    <span class="text-suntricity-500">Dashboard</span>
-                    <i data-lucide="chevron-right" class="w-2.5 h-2.5"></i>
-                    <span>Real-time Audit</span>
-                </nav>
-                <!-- Theme Toggle -->
-                <button onclick="toggleTheme()" class="p-2 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-suntricity-500 transition-colors">
-                    <i data-lucide="sun" class="w-4 h-4 hidden dark:block"></i>
-                    <i data-lucide="moon" class="w-4 h-4 block dark:hidden"></i>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={() => setIsDarkMode(!isDarkMode)}
+            className={`p-3 rounded-2xl border transition-all ${isDarkMode ? 'border-slate-800 bg-slate-800/50 text-yellow-400' : 'border-slate-200 bg-white text-slate-600 shadow-sm'}`}
+          >
+            {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+          </button>
+          <button 
+            onClick={() => setIsConfigOpen(true)} 
+            className={`p-3 rounded-2xl border transition-all ${apiKey ? 'border-lime-500/20 bg-lime-500/5 text-lime-500' : isDarkMode ? 'border-slate-800 bg-slate-800/50 text-slate-500' : 'border-slate-200 bg-white text-slate-400 shadow-sm'}`}
+          >
+            <Settings className="w-5 h-5" />
+          </button>
+        </div>
+      </header>
+
+      <main className="max-w-4xl mx-auto">
+        {!auditResults ? (
+          <div className={`border rounded-[2.5rem] p-8 md:p-16 shadow-xl transition-all duration-500 ${isDarkMode ? 'bg-slate-900/40 border-white/5' : 'bg-white border-slate-200'}`}>
+            <div className="text-center mb-12">
+              <h2 className={`text-3xl font-black mb-3 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>Audit Municipal Baseline</h2>
+              <p className="text-slate-500 text-sm max-w-md mx-auto">Upload a recent municipal bill to extract your school's current energy cost baseline.</p>
+            </div>
+
+            {!file ? (
+              <div 
+                className={`group border-2 border-dashed rounded-3xl p-16 cursor-pointer text-center transition-all duration-300 ${isDarkMode ? 'border-slate-800 bg-slate-950/50 hover:border-lime-500/40' : 'border-slate-200 bg-slate-50 hover:border-lime-500 hover:bg-lime-50'}`}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <input ref={fileInputRef} type="file" hidden onChange={handleFileUpload} accept="image/*,application/pdf" />
+                <Upload className="w-12 h-12 text-slate-400 group-hover:text-lime-500 mx-auto mb-4 transition-colors" />
+                <p className={`font-black text-lg ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Drop Invoice Scan Here</p>
+                <p className="text-slate-500 text-xs font-medium mt-2">PDF, PNG, or JPEG (Max 4MB)</p>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                <div className={`flex items-center gap-4 p-5 rounded-2xl border ${isDarkMode ? 'border-lime-500/10 bg-lime-500/5' : 'border-lime-100 bg-lime-50/50'}`}>
+                  <div className="p-3 bg-lime-500 text-white rounded-xl">
+                    <FileText className="w-6 h-6" />
+                  </div>
+                  <div className="flex-1 truncate">
+                    <p className={`text-sm font-black truncate ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{file.name}</p>
+                    <p className="text-[10px] text-slate-500 font-bold uppercase">Ready for Analysis</p>
+                  </div>
+                  <button onClick={() => setFile(null)} className="p-2 text-slate-400 hover:text-red-500 transition-colors">
+                    <RefreshCcw className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {error && (
+                  <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-400 text-xs font-bold flex gap-3 items-center">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{error}</span>
+                  </div>
+                )}
+
+                <button 
+                  onClick={runAudit} 
+                  disabled={isAuditing} 
+                  className={`w-full py-5 rounded-3xl font-black text-xs uppercase tracking-widest shadow-xl flex items-center justify-center gap-3 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${isDarkMode ? 'bg-white text-black hover:bg-lime-500 hover:text-white' : 'bg-slate-900 text-white hover:bg-lime-600'}`}
+                >
+                  {isAuditing ? (
+                    <><Loader2 className="w-5 h-5 animate-spin"/> Processing Document...</>
+                  ) : (
+                    <>Run AI Audit <ArrowRight className="w-5 h-5"/></>
+                  )}
                 </button>
-            </div>
-            <!-- Settings Indicator -->
-            <div id="keyStatus" class="flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-slate-500/10 border border-slate-500/20 text-[9px] font-black text-slate-500 uppercase tracking-tighter cursor-pointer hover:bg-suntricity-500/20 hover:text-suntricity-500 transition-colors" onclick="toggleKeyInput()">
-                <i data-lucide="settings" class="w-2.5 h-2.5"></i> System Configuration
-            </div>
-        </div>
-    </header>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+            {/* Breakdown Column */}
+            <div className="lg:col-span-8 space-y-6">
+              <div className={`border rounded-[2rem] p-8 shadow-xl ${isDarkMode ? 'bg-slate-900/40 border-white/5' : 'bg-white border-slate-200'}`}>
+                <div className="flex justify-between items-center mb-10">
+                  <h3 className="text-xs font-black uppercase text-slate-500 tracking-widest flex items-center gap-2">
+                    <PieChart className="w-4 h-4 text-lime-500" /> Audited Bill Breakdown
+                  </h3>
+                  <div className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase ${isDarkMode ? 'bg-white/5 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>
+                    {auditResults.billing_month} Cycle
+                  </div>
+                </div>
 
-    <!-- Settings Overlay -->
-    <div id="keyOverlay" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-        <div class="glass-panel p-6 rounded-3xl w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-200">
-            <div class="flex items-center justify-between mb-4">
-                <h3 class="text-md font-bold uppercase tracking-tight">System Configuration</h3>
-                <button onclick="toggleKeyInput()" class="text-slate-500 hover:text-white transition-colors"><i data-lucide="x" class="w-4 h-4"></i></button>
+                <div className="space-y-8">
+                  {auditResults.cost_breakdown.map((item, i) => {
+                    const pct = (item.amount / auditResults.total_amount_due) * 100;
+                    return (
+                      <div key={i} className="space-y-2">
+                        <div className="flex justify-between text-[11px] font-black uppercase">
+                          <span className="text-slate-500">{item.category}</span>
+                          <span className={isDarkMode ? 'text-white' : 'text-slate-900'}>{CURRENCY_SYMBOL}{item.amount.toLocaleString()}</span>
+                        </div>
+                        <div className={`h-2 rounded-full overflow-hidden ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100'}`}>
+                          <div 
+                            className="h-full bg-lime-500 transition-all duration-1000 ease-out" 
+                            style={{ width: `${pct}%` }}
+                          ></div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className={`mt-12 p-6 rounded-2xl border flex gap-4 ${isDarkMode ? 'bg-white/5 border-white/5' : 'bg-slate-50 border-slate-100'}`}>
+                  <Info className="w-5 h-5 text-slate-400 shrink-0 mt-0.5" />
+                  <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+                    This data establishes your <span className={isDarkMode ? 'text-white font-bold' : 'text-slate-900 font-bold'}>Baseline Municipal Liability</span>. Phase 2 will use this to calculate the avoidance value for every solar unit generated.
+                  </p>
+                </div>
+              </div>
             </div>
-            
-            <div class="space-y-4">
+
+            {/* Baseline Result Column */}
+            <div className="lg:col-span-4 space-y-6">
+              <div className="bg-lime-600 rounded-[2rem] p-8 text-white shadow-xl shadow-lime-500/20 flex flex-col justify-between aspect-square lg:aspect-auto">
                 <div>
-                    <label class="text-[10px] font-black uppercase text-slate-500 mb-1.5 block">Gemini API Key</label>
-                    <input type="password" id="keyInputField" placeholder="API Key..." class="w-full bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-xl py-2 px-4 text-xs focus:border-suntricity-500 outline-none transition-all dark:text-white text-slate-900">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Calculator className="w-4 h-4 opacity-60" />
+                    <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-60">Calculated Rate</p>
+                  </div>
+                  <h4 className="text-5xl font-black tracking-tighter mb-4">
+                    {CURRENCY_SYMBOL}{(auditResults.total_amount_due / auditResults.total_consumption).toFixed(2)}
+                    <span className="text-xs font-bold opacity-50 ml-1 uppercase">/ kWh</span>
+                  </h4>
+                  <p className="text-[11px] font-bold leading-tight opacity-90 uppercase">
+                    This is your blended municipal rate (incl. VAT & Fixed Fees).
+                  </p>
                 </div>
                 
-                <div>
-                    <label class="text-[10px] font-black uppercase text-slate-500 mb-1.5 block leading-tight">Data Provided by Solar PV Suppliers (R/kWh)</label>
-                    <div class="relative">
-                        <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 text-xs">R</span>
-                        <input type="number" id="solarRateField" value="1.50" step="0.01" class="w-full bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-xl py-2 pl-8 pr-4 text-xs focus:border-suntricity-500 outline-none transition-all dark:text-white text-slate-900 font-bold">
-                    </div>
+                <div className="pt-8 border-t border-white/10">
+                  <p className="text-[10px] font-black uppercase opacity-60 mb-2">Cycle Consumption</p>
+                  <p className="text-2xl font-black">{auditResults.total_consumption.toLocaleString()} <span className="text-xs">kWh</span></p>
                 </div>
+              </div>
 
-                <button onclick="saveApiKey()" class="w-full py-2.5 bg-suntricity-500 hover:bg-suntricity-600 rounded-xl text-xs font-black uppercase tracking-widest transition-all shadow-lg shadow-suntricity-500/20 text-white mt-4">Save Configuration</button>
+              <div className={`border rounded-[2rem] p-6 shadow-sm ${isDarkMode ? 'bg-slate-900/40 border-white/5' : 'bg-white border-slate-200'}`}>
+                <button 
+                  disabled
+                  className={`w-full py-4 mb-4 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 cursor-not-allowed ${isDarkMode ? 'bg-white/5 text-slate-600' : 'bg-slate-100 text-slate-400'}`}
+                >
+                  Continue to Phase 2 (Locked)
+                </button>
+                <button 
+                  onClick={resetAudit}
+                  className="w-full text-[10px] font-black uppercase text-slate-400 hover:text-red-500 transition-colors"
+                >
+                  Clear and Reset Audit
+                </button>
+              </div>
             </div>
+          </div>
+        )}
+      </main>
+
+      {/* Configuration Modal */}
+      {isConfigOpen && (
+        <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className={`p-8 rounded-[2.5rem] max-w-sm w-full shadow-2xl border ${isDarkMode ? 'bg-slate-900 border-white/10' : 'bg-white border-slate-100'}`}>
+            <div className="flex justify-between items-center mb-8">
+              <h3 className={`text-sm font-black uppercase tracking-widest ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>Config</h3>
+              <button onClick={() => setIsConfigOpen(false)} className="p-1 hover:bg-slate-100 rounded-lg transition-colors"><X className="w-5 h-5 text-slate-400"/></button>
+            </div>
+            
+            <div className="mb-8">
+              <label className="text-[10px] font-black text-slate-400 uppercase block mb-2 tracking-widest">Gemini API Key</label>
+              <input 
+                type="password" 
+                value={apiKey} 
+                onChange={(e) => setApiKey(e.target.value)} 
+                placeholder="Enter API Key"
+                className={`w-full border rounded-2xl py-3 px-4 text-xs outline-none focus:ring-2 focus:ring-lime-500 transition-all ${isDarkMode ? 'bg-black border-white/10 text-white' : 'bg-slate-50 border-slate-200 text-slate-900'}`} 
+              />
+              <p className="text-[9px] text-slate-400 mt-2 italic font-medium leading-relaxed">Your key is stored locally in your browser and never sent to our servers.</p>
+            </div>
+
+            <button 
+              onClick={() => { 
+                localStorage.setItem('solar_audit_api_key', apiKey); 
+                setIsConfigOpen(false); 
+                setNotification("API Key Saved");
+              }} 
+              className="w-full py-4 bg-lime-500 text-white font-black uppercase text-[11px] tracking-widest rounded-2xl shadow-lg hover:bg-lime-600 transition-all"
+            >
+              Save Configuration
+            </button>
+          </div>
         </div>
+      )}
+
+      {/* Toast Notification */}
+      {notification && (
+        <div className="fixed bottom-6 right-6 z-[200] max-w-sm w-full animate-in slide-in-from-bottom-5 duration-500">
+           <div className={`p-4 rounded-2xl shadow-2xl flex items-center justify-between gap-4 border transition-colors ${isDarkMode ? 'bg-slate-900 border-lime-500/20 text-white' : 'bg-white border-slate-700 text-slate-900'}`}>
+             <div className="flex items-center gap-3">
+                <CheckCircle2 className="w-5 h-5 text-lime-400" />
+                <span className="text-xs font-bold leading-tight">{notification}</span>
+             </div>
+             <button onClick={() => setNotification(null)} className="p-1 hover:bg-slate-100 rounded-lg transition-colors">
+               <X className="w-4 h-4 text-slate-400" />
+             </button>
+           </div>
+        </div>
+      )}
     </div>
+  );
+};
 
-    <main class="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8">
-        
-        <!-- Left Column -->
-        <div class="lg:col-span-5 space-y-6">
-            <section class="glass-panel rounded-3xl p-6 shadow-2xl">
-                <div class="flex items-center justify-between mb-5">
-                    <h2 class="text-sm font-bold uppercase tracking-widest flex items-center gap-2 text-slate-400">
-                        <i data-lucide="upload" class="w-4 h-4 text-suntricity-500"></i>
-                        Input Source
-                    </h2>
-                    <button onclick="resetApp()" id="resetBtn" class="hidden text-[10px] text-slate-500 hover:text-red-400 flex items-center gap-1 transition-colors font-bold uppercase">
-                        <i data-lucide="refresh-ccw" class="w-2.5 h-2.5"></i> Reset
-                    </button>
-                </div>
-                
-                <div id="dropZone" class="group relative border-2 border-dashed border-slate-300 dark:border-slate-800 hover:border-suntricity-500/40 bg-slate-100/50 dark:bg-slate-950/50 rounded-2xl p-12 transition-all duration-300 cursor-pointer text-center">
-                    <input type="file" id="fileInput" class="hidden" accept="image/*,application/pdf">
-                    <div class="mb-5 relative">
-                        <div class="absolute inset-0 bg-suntricity-500/20 blur-2xl group-hover:bg-suntricity-500/40 transition-all rounded-full"></div>
-                        <div class="relative bg-white dark:bg-slate-900 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto border border-slate-200 dark:border-white/5 group-hover:-translate-y-1 transition-transform">
-                            <i data-lucide="file-text" class="w-8 h-8 text-slate-400 group-hover:text-suntricity-500 transition-colors"></i>
-                        </div>
-                    </div>
-                    <p class="dark:text-slate-200 text-slate-700 font-bold text-md">Drop bill image or PDF</p>
-                    <p class="text-slate-500 text-[10px] mt-1 font-bold uppercase tracking-tighter">Automatic OCR Recognition</p>
-                </div>
-
-                <div id="previewContainer" class="hidden space-y-4">
-                    <div class="relative rounded-2xl overflow-hidden aspect-[4/3] border border-slate-200 dark:border-white/5 shadow-inner bg-slate-100 dark:bg-black">
-                        <img id="billPreview" src="" alt="Utility Bill" class="hidden w-full h-full object-contain opacity-90">
-                        <div id="pdfPlaceholder" class="hidden w-full h-full flex flex-col items-center justify-center bg-slate-100 dark:bg-slate-900">
-                             <i data-lucide="file-text" class="w-16 h-16 text-suntricity-500 mb-3"></i>
-                             <p id="pdfName" class="dark:text-slate-300 text-slate-700 font-bold px-4 text-center truncate w-full text-xs"></p>
-                             <p class="text-slate-500 text-[9px] mt-1 uppercase tracking-widest font-black">Document Loaded</p>
-                        </div>
-                        <div class="absolute inset-0 bg-gradient-to-t from-black/80 dark:from-black/80 via-transparent to-black/20 dark:to-transparent"></div>
-                        
-                        <div id="loaderOverlay" class="hidden absolute inset-0 flex flex-col items-center justify-center bg-white/60 dark:bg-slate-950/60 backdrop-blur-[2px]">
-                            <i data-lucide="loader-2" class="w-8 h-8 text-suntricity-500 animate-spin mb-3"></i>
-                            <p class="dark:text-white text-slate-900 font-black uppercase tracking-widest text-[10px]">Auditing Contents...</p>
-                        </div>
-                    </div>
-
-                    <button id="verifyBtn" class="w-full group py-3.5 bg-suntricity-500 hover:bg-suntricity-600 rounded-xl font-black text-[11px] uppercase tracking-widest text-white flex items-center justify-center gap-3 transition-all active:scale-[0.98] shadow-xl shadow-suntricity-500/20">
-                        Verify Tariff Breakdown
-                        <i data-lucide="arrow-right" class="w-4 h-4 group-hover:translate-x-1 transition-transform"></i>
-                    </button>
-
-                    <a href="https://www.suntricity.co.za" id="supplierLink" target="_blank" class="w-full group py-3.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 hover:border-suntricity-500 dark:hover:border-suntricity-500 rounded-xl font-black text-[11px] uppercase tracking-widest text-slate-600 dark:text-slate-400 hover:text-suntricity-500 dark:hover:text-suntricity-500 flex items-center justify-center gap-3 transition-all active:scale-[0.98] shadow-sm">
-                        Contact Approved Solar PV Suppliers
-                        <i data-lucide="external-link" class="w-4 h-4"></i>
-                    </a>
-                </div>
-
-                <div id="errorBox" class="hidden mt-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl flex items-start gap-4 text-red-600 dark:text-red-400 text-[11px]">
-                    <i data-lucide="alert-circle" class="w-4 h-4 shrink-0 mt-0.5"></i>
-                    <div class="space-y-0.5">
-                        <p class="font-black uppercase tracking-tight">Process Error</p>
-                        <p id="errorText" class="opacity-80 font-medium"></p>
-                    </div>
-                </div>
-            </section>
-
-            <section class="bg-slate-200/30 dark:bg-slate-900/20 border border-slate-200 dark:border-white/5 rounded-3xl p-6">
-                <h3 class="text-[10px] font-black text-slate-400 dark:text-slate-600 uppercase tracking-widest mb-6">Storyline Logic</h3>
-                <div class="grid gap-5" id="stepsList"></div>
-            </section>
-        </div>
-
-        <!-- Right Column -->
-        <div class="lg:col-span-7 space-y-6" id="resultsArea">
-            <div class="h-full min-h-[450px] border border-slate-200 dark:border-white/5 bg-slate-200/10 dark:bg-slate-900/10 rounded-3xl flex flex-col items-center justify-center text-center p-12 group transition-all">
-                <div class="relative mb-6">
-                    <div class="absolute inset-0 bg-suntricity-500/5 blur-3xl rounded-full"></div>
-                    <i data-lucide="bar-chart-3" class="w-16 h-16 text-slate-300 dark:text-slate-800 relative group-hover:scale-110 transition-transform duration-500"></i>
-                </div>
-                <h3 class="text-lg font-black text-slate-400 dark:text-slate-500 uppercase tracking-tight mb-2">Awaiting Verification</h3>
-                <p class="text-slate-400 dark:text-slate-600 max-w-xs leading-relaxed text-[11px] font-medium">
-                    Upload a utility bill screenshot or PDF to generate a high-density cost analysis and true tariff report.
-                </p>
-            </div>
-        </div>
-    </main>
-
-    <footer class="max-w-7xl mx-auto mt-20 pb-12 text-center">
-        <div class="inline-flex items-center gap-2 px-3 py-1.5 bg-slate-200 dark:bg-slate-900 border border-slate-300 dark:border-white/5 rounded-full text-[9px] font-black text-slate-500 dark:text-slate-600 uppercase tracking-widest shadow-xl">
-            <i data-lucide="zap" class="w-3 h-3 text-suntricity-500"></i>
-            GCC Utility Processor Engine v2.5
-        </div>
-        <p class="mt-4 text-slate-400 dark:text-slate-800 text-[9px] font-black uppercase tracking-widest">© 2026 SolarPV Tariff Comparison Global Solutions</p>
-    </footer>
-
-    <script>
-        let localApiKey = ""; 
-        let solarPVRate = 1.50; 
-
-        const html = document.documentElement;
-        const dropZone = document.getElementById('dropZone');
-        const fileInput = document.getElementById('fileInput');
-        const previewContainer = document.getElementById('previewContainer');
-        const billPreview = document.getElementById('billPreview');
-        const pdfPlaceholder = document.getElementById('pdfPlaceholder');
-        const pdfNameDisplay = document.getElementById('pdfName');
-        const verifyBtn = document.getElementById('verifyBtn');
-        const loaderOverlay = document.getElementById('loaderOverlay');
-        const resultsArea = document.getElementById('resultsArea');
-        const errorBox = document.getElementById('errorBox');
-        const errorText = document.getElementById('errorText');
-        const resetBtn = document.getElementById('resetBtn');
-        const keyOverlay = document.getElementById('keyOverlay');
-        const keyInputField = document.getElementById('keyInputField');
-        const solarRateField = document.getElementById('solarRateField');
-        const keyStatus = document.getElementById('keyStatus');
-        const supplierLink = document.getElementById('supplierLink');
-
-        lucide.createIcons();
-
-        function toggleTheme() {
-            html.classList.toggle('dark');
-            const isDark = html.classList.contains('dark');
-            localStorage.setItem('tariff_theme', isDark ? 'dark' : 'light');
-            lucide.createIcons();
-        }
-
-        const savedTheme = localStorage.getItem('tariff_theme') || 'dark';
-        if (savedTheme === 'light') html.classList.remove('dark');
-
-        function checkKeyStatus() {
-            const saved = localStorage.getItem('tariff_verify_key');
-            const savedSolar = localStorage.getItem('solar_pv_rate');
-            if (saved) localApiKey = saved;
-            if (savedSolar) {
-                solarPVRate = parseFloat(savedSolar);
-                solarRateField.value = solarPVRate;
-            }
-            
-            if (localApiKey) {
-                keyStatus.innerHTML = '<i data-lucide="check-circle" class="w-2.5 h-2.5"></i> Config Active';
-                keyStatus.classList.remove('text-slate-500', 'bg-slate-500/10');
-                keyStatus.classList.add('text-suntricity-500', 'bg-suntricity-500/10');
-                lucide.createIcons();
-            }
-        }
-        checkKeyStatus();
-
-        function toggleKeyInput() { keyOverlay.classList.toggle('hidden'); }
-        function saveApiKey() {
-            const val = keyInputField.value.trim();
-            const solarVal = solarRateField.value.trim();
-            if (val) {
-                localStorage.setItem('tariff_verify_key', val);
-                localApiKey = val;
-            }
-            if (solarVal) {
-                localStorage.setItem('solar_pv_rate', solarVal);
-                solarPVRate = parseFloat(solarVal);
-            }
-            toggleKeyInput();
-            checkKeyStatus();
-            if (window.lastResults) renderResults(window.lastResults);
-        }
-
-        const steps = [
-            { title: "Visual Scan", desc: "OCR isolating billing metrics" },
-            { title: "Cost Mapping", desc: "Segmenting components" },
-            { title: "Audit Verification", desc: "Calculating effective tariff rate" }
-        ];
-
-        document.getElementById('stepsList').innerHTML = steps.map((step, i) => `
-            <div class="flex gap-3">
-                <div class="flex-none w-8 h-8 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/5 flex items-center justify-center text-suntricity-500 text-[11px] font-black shadow-lg">
-                    ${i + 1}
-                </div>
-                <div>
-                    <h4 class="text-[11px] font-black dark:text-slate-300 text-slate-700 uppercase tracking-tight">${step.title}</h4>
-                    <p class="text-[10px] text-slate-500 font-medium">${step.desc}</p>
-                </div>
-            </div>
-        `).join('');
-
-        dropZone.onclick = () => fileInput.click();
-        dropZone.ondragover = (e) => { e.preventDefault(); dropZone.classList.add('border-suntricity-500'); };
-        dropZone.ondragleave = () => { dropZone.classList.remove('border-suntricity-500'); };
-        dropZone.ondrop = (e) => { e.preventDefault(); handleFile(e.dataTransfer.files[0]); };
-        fileInput.onchange = (e) => handleFile(e.target.files[0]);
-
-        function handleFile(file) {
-            if (!file) return;
-            const isImage = file.type.startsWith('image/') || /\.(jpg|jpeg|png|webp)$/i.test(file.name);
-            const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-
-            if (isImage || isPdf) {
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    base64Data = e.target.result.split(',')[1];
-                    currentMimeType = isPdf ? 'application/pdf' : (file.type || 'image/png');
-                    dropZone.classList.add('hidden');
-                    previewContainer.classList.remove('hidden');
-                    resetBtn.classList.remove('hidden');
-                    errorBox.classList.add('hidden');
-
-                    if (isPdf) {
-                        billPreview.classList.add('hidden');
-                        pdfPlaceholder.classList.remove('hidden');
-                        pdfNameDisplay.innerText = file.name;
-                    } else {
-                        pdfPlaceholder.classList.add('hidden');
-                        billPreview.classList.remove('hidden');
-                        billPreview.src = e.target.result;
-                    }
-                    lucide.createIcons();
-                };
-                reader.readAsDataURL(file);
-            }
-        }
-
-        function resetApp() {
-            dropZone.classList.remove('hidden');
-            previewContainer.classList.add('hidden');
-            resetBtn.classList.add('hidden');
-            base64Data = null;
-            window.lastResults = null;
-            resultsArea.innerHTML = `<div class="h-full min-h-[450px] border border-slate-200 dark:border-white/5 bg-slate-200/10 dark:bg-slate-900/10 rounded-3xl flex flex-col items-center justify-center text-center p-12 group transition-all opacity-50"><i data-lucide="bar-chart-3" class="w-16 h-16 text-slate-300 dark:text-slate-800 mb-6"></i><h3 class="text-lg font-black text-slate-400 dark:text-slate-500 uppercase tracking-tight mb-2">Awaiting Verification</h3><p class="text-slate-400 dark:text-slate-600 max-w-xs text-[11px] font-medium">Upload a utility bill screenshot or PDF to generate a high-density cost analysis.</p></div>`;
-            supplierLink.innerHTML = 'Contact Approved Solar PV Suppliers <i data-lucide="external-link" class="w-4 h-4"></i>';
-            lucide.createIcons();
-            errorBox.classList.add('hidden');
-        }
-
-        verifyBtn.onclick = async () => {
-            if (!base64Data) return;
-            const finalKey = localApiKey || "";
-            if (!finalKey) { toggleKeyInput(); return; }
-
-            loaderOverlay.classList.remove('hidden');
-            errorBox.classList.add('hidden');
-            verifyBtn.disabled = true;
-
-            const prompt = `Perform a high-precision utility tariff audit on this GCC document.
-            First, detect if this is an Electricity bill or a Water bill.
-            Return ONLY JSON: 
-            { 
-                "utility_type": "Electricity" | "Water",
-                "total_consumption": number, 
-                "unit": "kWh" | "KL",
-                "total_amount_due": number, 
-                "currency": "string", 
-                "billing_period": "string", 
-                "cost_breakdown": [{"category": "string", "amount": number}] 
-            }`;
-
-            try {
-                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${finalKey}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{
-                            role: "user",
-                            parts: [
-                                { text: prompt },
-                                { inlineData: { mimeType: currentMimeType, data: base64Data } }
-                            ]
-                        }],
-                        generationConfig: { responseMimeType: "application/json" }
-                    })
-                });
-                const data = await response.json();
-                const results = JSON.parse(data.candidates[0].content.parts[0].text);
-                window.lastResults = results;
-                renderResults(results);
-            } catch (err) {
-                errorText.innerText = "Audit failed. Check key and document clarity.";
-                errorBox.classList.remove('hidden');
-            } finally {
-                loaderOverlay.classList.add('hidden');
-                verifyBtn.disabled = false;
-            }
-        };
-
-        function renderResults(results) {
-            const total = results.total_amount_due || 1;
-            const consumption = results.total_consumption || 1;
-            const unit = results.unit || (results.utility_type === 'Water' ? 'KL' : 'kWh');
-            const effective = (total / consumption).toFixed(3);
-            
-            const sortedBreakdown = [...(results.cost_breakdown || [])].sort((a, b) => b.amount - a.amount);
-            const colors = ['#84cc16', '#10b981', '#059669', '#34d399', '#bef264', '#065f46', '#a3e635'];
-            
-            let currentPct = 0;
-            const gradientParts = sortedBreakdown.map((item, idx) => {
-                const pct = (item.amount / total) * 100;
-                const part = `${colors[idx % colors.length]} ${currentPct}% ${currentPct + pct}%`;
-                currentPct += pct;
-                return part;
-            });
-
-            const pieGradient = `conic-gradient(${gradientParts.join(', ')})`;
-
-            const benchmarkText = results.utility_type === 'Water' 
-                ? "Average Cost for Water Joburg:<br>R112.00/KL (Jan 2026)" 
-                : "Average Effective Tariff —<br>Primary School Joburg: R5.23 (Jan 2026)";
-
-            const solarSavingsPerUnit = Math.max(0, effective - solarPVRate).toFixed(2);
-            const solarTotalMonthlySavings = (solarSavingsPerUnit * consumption).toFixed(2);
-
-            // Update supplier link text based on utility type
-            if (results.utility_type === 'Water') {
-                supplierLink.innerHTML = 'Contact Approved Water Suppliers <i data-lucide="external-link" class="w-4 h-4"></i>';
-            } else {
-                supplierLink.innerHTML = 'Contact Approved Solar PV Suppliers <i data-lucide="external-link" class="w-4 h-4"></i>';
-            }
-
-            const breakdownHtml = sortedBreakdown.map((item, idx) => {
-                const pct = ((item.amount / total) * 100).toFixed(1);
-                const color = colors[idx % colors.length];
-                return `
-                    <div class="group">
-                        <div class="flex justify-between items-end mb-2">
-                            <div class="flex items-center gap-2.5">
-                                <div class="w-2 h-2 rounded-full shrink-0" style="background-color: ${color}"></div>
-                                <div class="flex flex-col">
-                                    <span class="text-[10px] font-black dark:text-slate-200 text-slate-800 group-hover:text-suntricity-500 transition-colors uppercase tracking-tight">${item.category}</span>
-                                    <span class="text-[9px] text-slate-500 font-bold uppercase tracking-tighter">${results.currency}${item.amount.toFixed(2)} total</span>
-                                </div>
-                            </div>
-                            <span class="text-sm font-black text-slate-400 tracking-tight">${pct}%</span>
-                        </div>
-                        <div class="h-1.5 bg-slate-200 dark:bg-slate-950 rounded-full overflow-hidden p-0 border border-slate-300 dark:border-white/5">
-                            <div class="h-full transition-all duration-1000 ease-out" style="width: ${pct}%; background-color: ${color}"></div>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-
-            resultsArea.innerHTML = `
-                <div class="space-y-6 animate-in fade-in slide-in-from-bottom-6 duration-700">
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <!-- Effective Tariff Box -->
-                        <div class="bg-gradient-to-br from-suntricity-500 to-emerald-700 rounded-3xl p-6 shadow-2xl relative overflow-hidden group">
-                            <i data-lucide="zap" class="absolute -right-4 -top-4 w-32 h-32 text-white opacity-10 group-hover:rotate-12 transition-transform duration-700"></i>
-                            <p class="text-lime-100/70 text-[10px] font-black uppercase tracking-widest mb-1">Effective Tariff (${results.utility_type})</p>
-                            <div class="flex items-baseline gap-1.5">
-                                <h2 class="text-4xl font-black text-white tracking-tighter">${results.currency}${effective}</h2>
-                                <span class="text-lime-100 text-xs font-bold uppercase tracking-tighter">/ ${unit}</span>
-                            </div>
-                            
-                            <p class="mt-3 text-[9px] font-black text-lime-200/90 uppercase tracking-tighter leading-tight">
-                                ${benchmarkText}
-                            </p>
-
-                            <!-- Solar Savings Badge -->
-                            ${results.utility_type === 'Electricity' ? `
-                            <div class="mt-6 p-3 bg-white/10 backdrop-blur-md rounded-2xl border border-white/20">
-                                <div class="flex items-center justify-between mb-1">
-                                    <span class="text-[9px] font-black text-white uppercase tracking-widest">Solar PV Rate</span>
-                                    <span class="text-[10px] font-black text-suntricity-200">${results.currency}${solarPVRate.toFixed(2)} / kWh</span>
-                                </div>
-                                <div class="flex items-center justify-between">
-                                    <span class="text-[9px] font-black text-lime-100 uppercase">Potential Spread Saving</span>
-                                    <span class="text-xs font-black text-white">${results.currency}${solarSavingsPerUnit} / kWh</span>
-                                </div>
-                            </div>
-                            ` : `
-                            <div class="mt-6 flex items-center gap-2 bg-white/10 px-2.5 py-1 rounded-lg backdrop-blur-md border border-white/10 text-[9px] font-black text-white uppercase tracking-widest">
-                                <i data-lucide="check" class="w-3 h-3 text-lime-200"></i> Verified
-                            </div>
-                            `}
-                        </div>
-
-                        <div class="glass-panel rounded-3xl p-6 flex flex-col justify-between shadow-xl">
-                            <div>
-                                <p class="text-slate-500 text-[10px] font-black uppercase tracking-widest mb-1">Total Bill Amount</p>
-                                <h3 class="text-2xl font-black dark:text-white text-slate-900 tracking-tight">${results.currency}${results.total_amount_due}</h3>
-                                <p class="text-[9px] text-slate-600 mt-1 uppercase font-black tracking-tighter">${results.billing_period || 'Current Cycle'}</p>
-                            </div>
-                            <div class="mt-6 pt-4 border-t border-slate-200 dark:border-white/5 flex justify-between items-center">
-                                <div class="flex flex-col">
-                                    <span class="text-[9px] font-black text-slate-500 uppercase tracking-widest">Total Usage</span>
-                                    <span class="text-lg font-black dark:text-slate-200 text-slate-800 tracking-tighter">${results.total_consumption} <span class="text-xs font-medium text-slate-500">${unit}</span></span>
-                                </div>
-                                <i data-lucide="activity" class="w-6 h-6 text-suntricity-500/30"></i>
-                            </div>
-                        </div>
-                    </div>
-
-                    ${results.utility_type === 'Electricity' && solarSavingsPerUnit > 0 ? `
-                    <div class="bg-suntricity-500/5 border border-suntricity-500/20 rounded-3xl p-6 flex flex-col md:flex-row items-center justify-between gap-4 animate-in zoom-in-95 duration-500">
-                        <div class="flex items-center gap-4">
-                            <div class="p-3 bg-suntricity-500 rounded-2xl shadow-lg shadow-suntricity-500/20">
-                                <i data-lucide="sun" class="w-6 h-6 text-white"></i>
-                            </div>
-                            <div>
-                                <h4 class="text-xs font-black uppercase text-suntricity-500 tracking-widest">Solar PV Opportunity</h4>
-                                <p class="text-[11px] font-medium text-slate-500">Based on your current effective tariff of ${results.currency}${effective}.</p>
-                            </div>
-                        </div>
-                        <div class="text-right">
-                            <p class="text-[9px] font-black uppercase text-slate-400 mb-1">ROI on Solar Investment</p>
-                            <p class="text-2xl font-black text-suntricity-500">${results.currency}${solarTotalMonthlySavings}</p>
-                        </div>
-                    </div>
-                    ` : ''}
-
-                    <div class="glass-panel rounded-3xl p-6 shadow-2xl">
-                        <div class="flex items-center justify-between mb-8">
-                            <h3 class="text-[11px] font-black uppercase tracking-widest flex items-center gap-3 text-slate-400">
-                                <i data-lucide="pie-chart" class="w-4 h-4 text-suntricity-500"></i> Cost Distribution
-                            </h3>
-                            <button onclick="toggleRaw()" class="text-[9px] font-black text-slate-600 hover:text-suntricity-500 uppercase tracking-widest transition-colors flex items-center gap-1.5">
-                                <i data-lucide="code" class="w-3 h-3"></i> Source
-                            </button>
-                        </div>
-
-                        <div id="breakdownContainer" class="grid grid-cols-1 md:grid-cols-12 gap-8 items-center">
-                            <div class="md:col-span-5 flex justify-center py-4">
-                                <div class="pie-chart group transition-transform hover:scale-105 duration-500" style="background: ${pieGradient}">
-                                    <div class="absolute inset-0 flex flex-col items-center justify-center z-10 text-center p-2">
-                                        <span class="text-[9px] font-black text-slate-500 uppercase tracking-widest">Audited</span>
-                                        <span class="text-md font-black dark:text-white text-slate-900 leading-tight">${results.currency}${results.total_amount_due}</span>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="md:col-span-7 grid gap-5">
-                                ${breakdownHtml}
-                            </div>
-                        </div>
-
-                        <div id="rawContainer" class="hidden">
-                            <pre class="bg-white dark:bg-slate-950 p-4 rounded-2xl text-[9px] dark:text-suntricity-400/70 text-slate-600 font-mono border border-slate-200 dark:border-white/5 overflow-x-auto max-h-[300px] leading-relaxed">${JSON.stringify(results, null, 2)}</pre>
-                        </div>
-                    </div>
-
-                    <div class="glass-panel rounded-3xl p-6 flex items-start gap-5">
-                        <div class="shrink-0 p-3 bg-suntricity-500/10 rounded-2xl border border-suntricity-500/20">
-                            <i data-lucide="activity" class="w-6 h-6 text-suntricity-500"></i>
-                        </div>
-                        <div class="space-y-1">
-                            <h4 class="font-black dark:text-slate-200 text-slate-800 uppercase text-[9px] tracking-widest">Efficiency Insight</h4>
-                            <p class="text-slate-500 leading-relaxed text-[11px] font-medium">
-                                Effective rate: <span class="dark:text-white text-slate-900 font-black">${results.currency}${effective}</span> per ${unit}. 
-                                <span class="text-suntricity-500 font-bold">${((sortedBreakdown.find(i => i.category.toLowerCase().includes('energy') || i.category.toLowerCase().includes('consumption'))?.amount / total) * 100).toFixed(0)}%</span> of total costs are attributed to direct usage. Overhead/Fixed costs are driving your effective tariff up.
-                            </p>
-                        </div>
-                    </div>
-                </div>
-            `;
-            lucide.createIcons();
-        }
-
-        function toggleRaw() {
-            document.getElementById('breakdownContainer').classList.toggle('hidden');
-            document.getElementById('rawContainer').classList.toggle('hidden');
-        }
-    </script>
-</body>
-</html>
+export default App;
